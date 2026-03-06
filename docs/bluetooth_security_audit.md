@@ -49,15 +49,41 @@ across both nrf52 and sf32lb52 targets:
 - `third_party/nimble/syscfg/app/syscfg.yml:6-9`
 - `third_party/nimble/port/include/sf32lb52/syscfg/syscfg.h:880-941`
 
-### Assessment
+### CC2564x Platform — CRITICALLY WEAKER Configuration
 
-**STRONG**: This is a best-practice BLE security configuration:
+The CC2564x target has dramatically different (weaker) security settings:
+
+| Setting | CC2564x Value | nrf52/sf32lb52 Value | Risk |
+|---------|--------------|---------------------|------|
+| `BLE_SM_IO_CAP` | `BLE_HS_IO_NO_INPUT_OUTPUT` | `BLE_HS_IO_DISPLAY_YESNO` | **Just Works pairing — no MITM protection** |
+| `BLE_SM_LEGACY` | 1 | 0 | Legacy pairing allowed (weaker crypto) |
+| `BLE_SM_SC_ONLY` | 0 | 1 | Can be downgraded to legacy pairing |
+| `BLE_SM_MITM` | 0 | 1 | **MITM protection disabled** |
+| `BLE_SM_LVL` | 0 | 4 | **No minimum security level enforced** |
+
+**Source:** `third_party/nimble/port/include/cc2564x/syscfg/syscfg.h:880-941`
+
+**Impact:** On CC2564x hardware, an attacker can:
+- Perform a **silent active MITM** during pairing (Just Works has no user verification)
+- Force a **downgrade to legacy pairing** (weaker than Secure Connections)
+- The minimum security level of 0 means unencrypted connections are accepted
+
+### Assessment (nrf52/sf32lb52)
+
+**STRONG**: The nrf52 and sf32lb52 platforms use best-practice BLE security:
 - SC-Only mode prevents downgrade to legacy pairing (vulnerable to passive
   eavesdropping via ECDH cracking of the short TK)
 - Numeric Comparison provides MITM protection during pairing
 - Security Level 4 is the highest BLE security level
 - Debug keys are disabled (prevents trivial key extraction)
 - IRK distribution enables Resolvable Private Addresses for tracking resistance
+
+### Assessment (CC2564x)
+
+**CRITICALLY WEAK**: Just Works pairing with no MITM protection. An attacker
+within BLE range can silently pair with the watch and gain full access to all
+Pebble Protocol data. This is the most severe finding in this audit for any
+device using CC2564x hardware.
 
 ---
 
@@ -351,13 +377,18 @@ firmware. The architecture supports it as a transport type (mentioned in session
 but the current codebase appears BLE-only. Classic Bluetooth, when present, would
 have its own pairing and security concerns.
 
-### 10.2 BLE Advertisement Tracking
+### 10.2 BLE Advertisement Tracking & Address Pinning
 
 - RPA rotation every 300 seconds provides moderate tracking resistance
 - During the 5-minute window, a device can be tracked
 - Advertisement data may include identifying service UUIDs
 - The `ble_hs_id_infer_auto()` call (`advert.c:382`) may select public address
   if no IRK is available, eliminating tracking protection
+- **Address pinning issue** (`services/common/bluetooth/local_addr.c:73-83`):
+  When bonded devices exist that require address pinning, RPA cycling is
+  **paused entirely**. The watch uses a single persistent RPA indefinitely,
+  making long-term tracking trivial. Since most users will have a bonded phone,
+  address cycling is effectively disabled in normal use.
 
 ### 10.3 Side-Channel: Traffic Analysis
 
@@ -404,7 +435,9 @@ could send arbitrary Pebble Protocol messages to any endpoint.
 | 7 | Bonding keys stored without at-rest encryption | LOW-MEDIUM | Physical access required |
 | 8 | Recovery FW allows unconditional re-pairing | LOW | Requires recovery mode entry |
 | 9 | Traffic analysis possible despite encryption | LOW | Inherent to BLE |
-| 10 | No defense-in-depth above link layer | ARCHITECTURAL | Single point of failure |
+| 10 | CC2564x uses Just Works pairing with MITM=0 | CRITICAL | Silent MITM possible |
+| 11 | Address pinning disables RPA cycling when bonded | LOW-MEDIUM | Long-term tracking |
+| 12 | No defense-in-depth above link layer | ARCHITECTURAL | Single point of failure |
 
 ---
 
