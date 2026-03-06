@@ -413,14 +413,18 @@ endpoints are accessible.
 
 ## 11. Additional Attack Vectors
 
-### 10.1 Bluetooth Classic (SPP) — Not present in current codebase
+### 11.1 Bluetooth Classic (SPP) — Fully Stubbed Out
 
-No SPP/RFCOMM implementation was found in the current NimBLE-based Bluetooth
-firmware. The architecture supports it as a transport type (mentioned in session.h),
-but the current codebase appears BLE-only. Classic Bluetooth, when present, would
-have its own pairing and security concerns.
+Classic Bluetooth is completely disabled — all functions in
+`bluetooth-fw/nimble/bt_classic_stubs.c` are no-ops or return false:
+- `bt_driver_supports_bt_classic()` returns false
+- `bt_driver_classic_is_connected()` returns false
+- `bt_driver_classic_disconnect()` is a no-op
 
-### 10.2 BLE Advertisement Tracking & Address Pinning
+This eliminates the entire Classic BT attack surface (SSP downgrade, PIN brute
+force, KNOB attack, etc.). Only BLE is active.
+
+### 11.2 BLE Advertisement Tracking & Address Pinning
 
 - RPA rotation every 300 seconds provides moderate tracking resistance
 - During the 5-minute window, a device can be tracked
@@ -433,7 +437,7 @@ have its own pairing and security concerns.
   making long-term tracking trivial. Since most users will have a bonded phone,
   address cycling is effectively disabled in normal use.
 
-### 10.3 Side-Channel: Traffic Analysis
+### 11.3 Side-Channel: Traffic Analysis
 
 Even with encryption, an attacker can observe:
 - **Timing patterns** — when notifications arrive (correlate with known events)
@@ -441,14 +445,14 @@ Even with encryption, an attacker can observe:
 - **Connection events** — phone calls cause specific traffic patterns
 - **Health sync patterns** — periodic data logging uploads are predictable
 
-### 10.4 Denial of Service
+### 11.4 Denial of Service
 
 - **BLE jamming** — standard radio-level attack, no software mitigation possible
 - **Connection flooding** — repeated connection attempts to drain battery
 - **Connection parameter manipulation** — as described in Section 7
 - **Malformed PPoGATT packets** — could potentially crash the PPoGATT state machine
 
-### 10.5 Key Extraction from Watch Hardware
+### 11.5 Key Extraction from Watch Hardware
 
 If an attacker has physical access to the watch:
 - The bonding keys (LTK, IRK) are stored in persistent storage
@@ -457,7 +461,7 @@ If an attacker has physical access to the watch:
 - This would allow passive decryption of all future (and recorded past)
   communications with the bonded phone
 
-### 10.6 Companion App Compromise
+### 11.6 Companion App Compromise
 
 The Pebble Protocol has no mechanism to authenticate the companion app beyond
 BLE pairing. A malicious app on the phone that can access the BLE connection
