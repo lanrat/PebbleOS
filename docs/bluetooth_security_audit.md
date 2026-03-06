@@ -305,9 +305,52 @@ with no signature check preventing execution.
 
 ---
 
-## 7. Connection Parameter Manipulation
+## 7. PPoGATT Transport Vulnerabilities
+
+### 7.1 Window Size DoS (CRITICAL)
+
+The PPoGATT Reset Complete handler accepts window size values from the remote
+peer without validation (`ppogatt.c:590-605`):
+
+```c
+// src/fw/comm/ble/kernel_le_client/ppogatt/ppogatt.c:602-603
+client->out.tx_window_size = MIN(client->out.tx_window_size, payload->ppogatt_max_rx_window);
+client->out.rx_window_size = MIN(client->out.rx_window_size, payload->ppogatt_max_tx_window);
+```
+
+`ppogatt_max_rx_window` and `ppogatt_max_tx_window` are `uint8_t` values from the
+untrusted remote peer (`ppogatt_internal.h:71-72`). If the remote sends **0**, the
+window sizes become 0, causing:
+
+- **Permanent data transmission deadlock** at `ppogatt.c:1157`:
+  ```c
+  if (prv_num_packets_in_flight(client) >= client->out.tx_window_size) {
+      // 0 >= 0 is always true — no data can ever be sent
+      return NULL;
+  }
+  ```
+- The connection appears alive but cannot transmit any data.
+
+**Attack:** A paired device (or MITM) sends a Reset Complete packet with
+`ppogatt_max_rx_window=0, ppogatt_max_tx_window=0` to permanently disable
+data transmission on the PPoGATT link.
+
+**Recommendation:** Validate window sizes: `if (window_size == 0) use_default;`
+
+### 7.2 Reset Request in Any State
+
+A `PPoGATTPacketTypeResetRequest` is accepted in **any connection state**
+(`ppogatt.c:691-694`) — even during an active data transfer or during another
+reset sequence. A malicious peer could repeatedly send Reset Requests to disrupt
+communication. The firmware does have a max consecutive reset counter
+(`PPOGATT_RESET_COUNT_MAX=5`), after which it disconnects.
+
+---
+
+## 8. Connection Parameter Manipulation
 
 ### Finding: MEDIUM SEVERITY
+
 
 The connection update request handler blindly accepts peer-requested parameters:
 
@@ -327,7 +370,7 @@ connection parameters to drain the watch battery faster or cause instability.
 
 ---
 
-## 8. GATT Service Exposure Without Encryption Requirements
+## 9. GATT Service Exposure Without Encryption Requirements
 
 ### Finding: MEDIUM SEVERITY
 
@@ -350,7 +393,7 @@ flags to enforce encryption at the GATT level, providing defense-in-depth.
 
 ---
 
-## 9. Endpoint Access Control
+## 10. Endpoint Access Control
 
 The Pebble Protocol has a basic access control system distinguishing "private"
 (system app only) and "any" (3rd party apps too) endpoints. From
@@ -368,7 +411,7 @@ endpoints are accessible.
 
 ---
 
-## 10. Additional Attack Vectors
+## 11. Additional Attack Vectors
 
 ### 10.1 Bluetooth Classic (SPP) — Not present in current codebase
 
@@ -422,7 +465,7 @@ could send arbitrary Pebble Protocol messages to any endpoint.
 
 ---
 
-## 11. Summary of Findings
+## 12. Summary of Findings
 
 | # | Finding | Severity | Status |
 |---|---------|----------|--------|
@@ -435,13 +478,14 @@ could send arbitrary Pebble Protocol messages to any endpoint.
 | 7 | Bonding keys stored without at-rest encryption | LOW-MEDIUM | Physical access required |
 | 8 | Recovery FW allows unconditional re-pairing | LOW | Requires recovery mode entry |
 | 9 | Traffic analysis possible despite encryption | LOW | Inherent to BLE |
-| 10 | CC2564x uses Just Works pairing with MITM=0 | CRITICAL | Silent MITM possible |
-| 11 | Address pinning disables RPA cycling when bonded | LOW-MEDIUM | Long-term tracking |
-| 12 | No defense-in-depth above link layer | ARCHITECTURAL | Single point of failure |
+| 10 | PPoGATT window size DoS (remote sends 0) | HIGH | Permanent data transmission deadlock |
+| 11 | CC2564x uses Just Works pairing with MITM=0 | CRITICAL | Silent MITM possible |
+| 12 | Address pinning disables RPA cycling when bonded | LOW-MEDIUM | Long-term tracking |
+| 13 | No defense-in-depth above link layer | ARCHITECTURAL | Single point of failure |
 
 ---
 
-## 12. Recommendations
+## 13. Recommendations
 
 ### High Priority
 
@@ -479,7 +523,7 @@ could send arbitrary Pebble Protocol messages to any endpoint.
 
 ---
 
-## 13. Answers to Specific Questions
+## 14. Answers to Specific Questions
 
 ### Q: If a victim has a Pebble device setup, what could a nearby adversary do?
 
